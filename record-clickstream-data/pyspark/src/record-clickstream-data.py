@@ -46,7 +46,8 @@ clickStream  = clickStream.withColumn("customer_id",expr("split('|',value)[0]"))
 clickStream = clickStream.drop("value")
 
 clickStreamQuery = clickStream.writeStream\
-                              .format('csv')\
+                              .format('parquet')\
+                              .partitionBy('zip_code')\
                               .outputMode('append')
                               
 if checkpoint_location is not None:
