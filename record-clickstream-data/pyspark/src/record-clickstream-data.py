@@ -34,6 +34,7 @@ if clickstream_data_path is None:
 
 sparkSession = SparkSession.builder\
                            .appName("Record ClickStream Data")\
+                           .config("spark.sql.shuffle.partitions",8)\
                            .getOrCreate()
 
 clickStream = sparkSession.readStream\
@@ -42,21 +43,24 @@ clickStream = sparkSession.readStream\
                           .option('subscribe',kafka_topic)\
                           .load()
 
-clickStream = clickStream.selectExpr("CAST(value as STRING)")
+clickStream = clickStream.selectExpr("CAST(offset as bigint)","CAST(value as STRING)")
 
-clickStream  = clickStream.withColumn("customer_id",expr("split('|',value)[0]"))\
-                          .withColumn("product_id",expr("split('|',value)[1]"))\
-                          .withColumn("zip_code",expr("split('|',value)[2]"))\
-                          .withColumn("browser_x_pos",expr("split('|',value)[3]"))\
-                          .withColumn("browser_y_pos",expr("split('|',value)[4]"))\
-                          .withColumn("date_time",expr("cast(split('|',value)[5] as timestamp)"))
+# Value: 5590|1151|67117|1352.628|1897.375|2021/03/20 18:19:48
+
+clickStream  = clickStream.withColumn("customer_id",expr("cast(split(value,'\\\|')[0] as bigint)"))\
+                          .withColumn("product_id",expr("cast(split(value,'\\\|')[1] as bigint)"))\
+                          .withColumn("browser_x_pos",expr("cast(split(value,'\\\|')[3] as float)"))\
+                          .withColumn("browser_y_pos",expr("cast(split(value,'\\\|')[4] as float)"))\
+                          .withColumn("date_time",expr("split(value,'\\\|')[5]"))\
+                          .withColumn("zip_code",expr("cast(split(value,'\\\|')[2] as int)"))
 
 clickStream = clickStream.drop("value")
 
 clickStreamQuery = clickStream.writeStream\
                               .format('parquet')\
                               .partitionBy('zip_code')\
-                              .outputMode('append')
+                              .outputMode('append')\
+                              .trigger(processingTime='1 minute')
                               
 if checkpoint_location is not None:
     clickStreamQuery = clickStreamQuery.option('checkpointLocation',checkpoint_location)
