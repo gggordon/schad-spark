@@ -63,8 +63,8 @@ if checkpoint_location is not None:
 
 clickStreamQuery = clickStreamQuery.option('path',clickstream_data_path)
 
-clickStreamQuery.start()
+streamingQuery = clickStreamQuery.start()
 
-clickStreamQuery.awaitTermination()
+streamingQuery.awaitTermination()
                           
 
