@@ -10,16 +10,24 @@ checkpoint_location=None
 clickstream_data_path=None
 
 for index,option in enumerate(sys.argv):
-    if index == 0:
-        clickstream_data_path = option
     if index == 1:
-        kafka_topic = option
+        clickstream_data_path = option
     if index == 2:
+        kafka_topic = option
+    if index == 3:
         kafka_bootstrap_server = option 
     if index == 4:
         checkpoint_location = option
-    if index > 4:
+    if index > 5:
         break
+
+print("Configuring with arguments")
+print("="*32)
+print("ClickStream Data Path :",clickstream_data_path)
+print("Kafka Topic :",kafka_topic)
+print("Kafka Bootstrap Server :",kafka_bootstrap_server)
+print("Checkpoint Location :",checkpoint_location)
+print("="*32)
 
 if clickstream_data_path is None:
     raise Exception("Clickstream Data Path is required as first argument")
