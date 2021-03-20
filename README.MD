@@ -19,3 +19,7 @@ bin/pyspark --packages org.apache.spark:spark-sql-kafka-0-10_2.11:2.4.4
 ```
 spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.11:2.3.2 record-clickstream-data.py "/data/clickstream/recordings/data" product_clickstream solar1.solarigonics.com:6667 "hdfs:/data/clickstream/recordings/checkpoint"
 ```
+
+```
+spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.11:2.3.2 --master=yarn --deploy-mode cluster --executor-memory 500M --num-executors 8 record-clickstream-data.py "/data/clickstream/recordings/data" product_clickstream solar1.solarigonics.com:6667 "hdfs:/data/clickstream/recordings/checkpoint"
+```
