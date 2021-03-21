@@ -28,9 +28,8 @@ if store_data_path is None:
     raise Exception("Data Path is required as first argument")
 
 sparkSession = SparkSession.builder\
-                           .appName("Total Product Views Each Epoch")\
+                           .appName("Total Product Views Per Hour Per State")\
                            .option('spark.sql.parquet.compression.codec','snappy')\
-                           .enableHiveSupport()\
                            .getOrCreate()
 
 # In the event table is not located in hive
