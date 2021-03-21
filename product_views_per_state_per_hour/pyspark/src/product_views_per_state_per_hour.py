@@ -8,16 +8,19 @@ kafka_bootstrap_server="0.0.0.0:9092"
 kafka_topic="product_clickstream"
 checkpoint_location=None
 store_data_path=None
+states_data_path=None
 
 for index,option in enumerate(sys.argv):
-    if index == 0:
-        store_data_path = option
     if index == 1:
-        kafka_topic = option
+        store_data_path = option
     if index == 2:
+        kafka_topic = option
+    if index == 3:
         kafka_bootstrap_server = option 
     if index == 4:
         checkpoint_location = option
+    if index == 5:
+        states_data_path = option
     if index > 4:
         break
 
@@ -31,18 +34,19 @@ sparkSession = SparkSession.builder\
                            .getOrCreate()
 
 # In the event table is not located in hive
-# zipCodeStates = spark.read\
-#                      .format('csv')\
-#                      .option('sep','|')\
-#                      .option('header',True)\
-#                      .path('path_to_zip_code_states')
-# zipCodeStates.createOrReplaceTempView('zip_code_states')
+zipCodeStates = spark.read\
+                     .format('csv')\
+                     .option('sep','|')\
+                     .option('header',True)\
+                     .path(states_data_path)
+
+zipCodeStates.createOrReplaceTempView('zip_code_states')
 
 zipStates = sparkSession.sql("""
 SELECT DISTINCT 
     zip_code, state
 FROM
-    retaildb.states
+    zip_code_states
 """)
 zipStates.cache()
 zipStates.createOrReplaceTempView("zip_states")
@@ -54,82 +58,68 @@ clickStream = sparkSession.readStream\
                           .load()
 
 clickStream = clickStream.selectExpr("CAST(value as STRING)")
-#TODO: Window every hour
+
 productStream  = clickStream.select(
-    expr("split('|',value)[1]").alias('product_id'),
-    expr("split('|',value)[2]").alias('zip_code'),
-    expr("cast(split('|',value)[5] as timestamp)").alias('date_time')
-)
-
-# productStream = productStream.select(
-#     col('product_id'),
-#     col('zip_code'),
-#     col('date_time'),
-#     expr("""
-#     concat(
-#         split(' ',date_time)[0],
-#         ' ',
-#         split(':',split(' ',date_time)[1])[0]
-#     )
-#     """.trim()).alias('hour')
-# )
-
-#productStream.createOrReplaceTempView('product_state_hour')
-
-# productCounts = sparkSession.sql("""
-# SELECT
-#   count(1) as no_views,
-#   product_id,
-#   zip_code,
-#   hour
-# FROM 
-#   product_state_hour
-# GROUP BY
-#   product_id, zip_code, hour
-# """)
+    expr("cast(split(value,'\\\|')[1] as bigint)").alias('product_id'),
+    expr("cast(split(value,'\\\|')[2] as int)").alias('zip_code'),
+    expr("""
+    CASE
+       WHEN split(value,'\\\|')[5] RLIKE "[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{1,2}:[0-9]{1,2}:[0-9]{1,2}"
+           THEN unix_timestamp(split(value,'\\\|')[5])
+       ELSE NULL
+    END
+    """).alias('date_time')
+)\
+.where('date_time is not null')
 
 productCounts = productStream.withWatermark('date_time','1 hour').groupBy(
    window(col('date_time'),'1 hour','5 minutes'),
    col('product_id'),
    col('zip_code'),
 )\
-.count()\
-.withColumn('hour',     expr("""
-    concat(
-        split(' ',date_time)[0],
-        ' ',
-        split(':',split(' ',date_time)[1])[0]
-    )
-    """.trim())
+.count()
 
-# productCounts.createOrReplaceTempView('product_view_counts')
+
+productCounts.createOrReplaceTempView('product_view_counts')
 
 # Ideally we would use a left join but since our click stream data is synthetic
 # We will use an inner join to filter out zip codes which may not exist
-# productViewCountsWithState = sparkSession.sql("""
-# SELECT
-#   pvc.*,
-#   zs.state
-# FROM
-#   product_view_counts pvc
-# INNER JOIN 
-#   zip_states zs ON zs.zip_code = pvc.zip_code
-# """)
-productViewCountsWithState = productCounts.join(zipStates,'zip_code')
 
 
-                          
+productViewCountsWithState = sparkSession.sql("""
+SELECT
+  pvc.product_id,
+  pvc.count,
+  pvc.date_time,
+  zs.state,
+  substr(
+      regexp_replace(
+          from_unixtime(pvc.date_time),
+          "[^0-9]",
+          ""
+      ),
+      0,
+      12
+  ) as hour
+FROM
+  product_view_counts pvc
+INNER JOIN 
+  zip_states zs ON zs.zip_code = pvc.zip_code
+""")
 
 query = productViewCountsWithState.writeStream\
                               .format('parquet')\
                               .partitionBy('hour')\
-                              .outputMode('update')
+                              .outputMode('update')\
+                              .queryName('product_views_per_state_per_hour')
                               
 if checkpoint_location is not None:
     query = query.option('checkpointLocation',checkpoint_location)
 
 query = query.option('path',store_data_path)
 
-query.start()
+streamingQuery = query.start()
+
+streamingQuery.awaitTermination()
                           
 
