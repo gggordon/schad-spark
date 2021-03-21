@@ -14,18 +14,20 @@ for index,option in enumerate(sys.argv):
     if index == 1:
         store_data_path = option
     if index == 2:
-        kafka_topic = option
-    if index == 3:
-        kafka_bootstrap_server = option 
-    if index == 4:
-        checkpoint_location = option
-    if index == 5:
         states_data_path = option
-    if index > 4:
+    if index == 3:
+        kafka_topic = option
+    if index == 4:
+        kafka_bootstrap_server = option 
+    if index == 5:
+        checkpoint_location = option
+    if index > 6:
         break
 
 if store_data_path is None:
     raise Exception("Data Path is required as first argument")
+if states_data_path is None:
+    raise Exception("States Data Path is required as second argument")
 
 sparkSession = SparkSession.builder\
                            .appName("Total Product Views Per Hour Per State")\
