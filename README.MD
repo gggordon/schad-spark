@@ -62,11 +62,11 @@ This job is located in [product_views_per_state_per_hour](./product_views_per_st
 The arguments are retrieved from the cli/system arguments in the following order
 
 - Data Storage Path [Required]: "/data/clickstream/product_views_per_state_per_hour/data" 
-- States Data Path [Required]: 
+- Parquet States Data Path [Required]: 
 - Kafka Topic [Optional,Default:'product_clickstream']: product_clickstream 
 - Kafka Boostrap Server [Optional,Default:'0.0.0.0:9092']: solar1.solarigonics.com:6667 
 - Checkpoint Location [Optional,Default:None]: "hdfs:/data/clickstream/product_views_per_state_per_hour/checkpoint"
-- States Data Path
+
 
 #### Dependencies
 - org.apache.spark:spark-sql-kafka-0-10_2.11:2.4.4
@@ -74,7 +74,7 @@ The arguments are retrieved from the cli/system arguments in the following order
 #### Deployment
 ```bash
 
-spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.11:2.3.2 --master=yarn --deploy-mode=cluster --executor-memory 1G --driver-memory 1G product_views_per_state_per_hour.py "/data/clickstream/product_views_per_state_per_hour/data" "warehouse/tablespace/managed/hive/retaildb.db/states" product_clickstream solar1.solarigonics.com:6667 "hdfs:/data/clickstream/product_views_per_state_per_hour/checkpoint"
+spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.11:2.3.2 --master=yarn --executor-memory 1G --driver-memory 1G product_views_per_state_per_hour.py "/data/clickstream/product_views_per_state_per_hour/data" "/warehouse/tablespace/managed/hive/retaildb.db/states/base_0000001" product_clickstream solar1.solarigonics.com:6667 "hdfs:/data/clickstream/product_views_per_state_per_hour/checkpoint"
 
 ```
 

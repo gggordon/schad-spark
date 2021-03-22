@@ -31,15 +31,14 @@ if states_data_path is None:
 
 sparkSession = SparkSession.builder\
                            .appName("Total Product Views Per Hour Per State")\
-                           .option('spark.sql.parquet.compression.codec','snappy')\
+                           .config('spark.sql.parquet.compression.codec','snappy')\
+                           .config("spark.sql.shuffle.partitions",8)\
                            .getOrCreate()
 
 # In the event table is not located in hive
-zipCodeStates = spark.read\
-                     .format('csv')\
-                     .option('sep','|')\
-                     .option('header',True)\
-                     .path(states_data_path)
+zipCodeStates = sparkSession.read\
+                     .format('parquet')\
+                     .load(states_data_path)
 
 zipCodeStates.createOrReplaceTempView('zip_code_states')
 
@@ -66,7 +65,7 @@ productStream  = clickStream.select(
     expr("""
     CASE
        WHEN split(value,'\\\|')[5] RLIKE "[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{1,2}:[0-9]{1,2}:[0-9]{1,2}"
-           THEN unix_timestamp(split(value,'\\\|')[5])
+           THEN cast( unix_timestamp(split(value,'\\\|')[5]) as timestamp)
        ELSE NULL
     END
     """).alias('date_time')
@@ -74,7 +73,7 @@ productStream  = clickStream.select(
 .where('date_time is not null')
 
 productCounts = productStream.withWatermark('date_time','1 hour').groupBy(
-   window(col('date_time'),'1 hour','5 minutes'),
+   window(col('date_time'),'1 hour','5 minutes').alias('date_time'),
    col('product_id'),
    col('zip_code'),
 )\
@@ -95,7 +94,7 @@ SELECT
   zs.state,
   substr(
       regexp_replace(
-          from_unixtime(pvc.date_time),
+          cast(pvc.date_time as string),
           "[^0-9]",
           ""
       ),
@@ -111,7 +110,7 @@ INNER JOIN
 query = productViewCountsWithState.writeStream\
                               .format('parquet')\
                               .partitionBy('hour')\
-                              .outputMode('update')\
+                              .outputMode('append')\
                               .queryName('product_views_per_state_per_hour')
                               
 if checkpoint_location is not None:
