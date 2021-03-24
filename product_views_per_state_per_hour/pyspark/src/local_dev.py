@@ -1,15 +1,17 @@
 # bin/pyspark --packages org.apache.spark:spark-sql-kafka-0-10_2.11:2.4.4,org.apache.logging.log4j:log4j-core:2.7
 import sys
-from pyspark.sql import SparkSession
+from pyspark.sql import SparkSession, Row
 from pyspark.sql.functions import expr,col,window
 
 
+test_mode = True
 kafka_bootstrap_server="0.0.0.0:9092"
 kafka_topic="product_clickstream"
-checkpoint_location="/home/tree/Desktop/_resources/projects/schad/schad-spark/product_views_per_state_per_hour/pyspark/src/checkpoint"
-store_data_path="/home/tree/Desktop/_resources/projects/schad/schad-spark/product_views_per_state_per_hour/pyspark/src/data"
+checkpoint_location=None
+store_data_path="./data" if test_mode else None
 states_data_path=None
-use_mock_state_data = True
+count_window= '5 minutes' if test_mode else '1 hour'
+count_interval='1 minute' if test_mode else '5 minutes'
 
 for index,option in enumerate(sys.argv):
     if index == 1 and option is not None:
@@ -27,23 +29,28 @@ for index,option in enumerate(sys.argv):
 
 if store_data_path is None:
     raise Exception("Data Path is required as first argument")
-# if states_data_path is None:
-#     raise Exception("States Data Path is required as second argument")
+if test_mode == False:
+    if states_data_path is None:
+        raise Exception("States Data Path is required as second argument")
+
+if checkpoint_location is None:
+    checkpoint_location = store_data_path+'checkpoint'
 
 sparkSession = SparkSession.builder\
                            .appName("Total Product Views Per Hour Per State 1.4.1")\
                            .config('spark.sql.parquet.compression.codec','snappy')\
                            .config("spark.sql.shuffle.partitions",8)\
                            .getOrCreate()
-sparkSession.sparkContext.setLogLevel("ERROR")
+
+# reduce log level to improve visibility of console output
+if test_mode: 
+    sparkSession.sparkContext.setLogLevel("ERROR")
 
 
-if use_mock_state_data:
-    from pyspark.sql import Row
+if test_mode:
     states_data = [Row(zip_code=index,state="State %d" % index) for index in range(10000,100000)]
     zipStates = sparkSession.createDataFrame(states_data,schema="zip_code int, state string")
 else:
-    # In the event table is not located in hive
     zipCodeStates = sparkSession.read\
                          .format('parquet')\
                          .load(states_data_path)
@@ -96,8 +103,8 @@ WHERE date_time is not null
 """)
 
 
-productCounts = productStream.withWatermark('date_time','5 minutes').groupBy(
-   window(col('date_time'),'5 minutes','1 minutes').alias('date_time'),
+productCounts = productStream.withWatermark('date_time',count_window).groupBy(
+   window(col('date_time'),count_window,count_interval).alias('date_time'),
    col('product_id'),
    col('state'),
 )\
@@ -106,17 +113,12 @@ productCounts = productStream.withWatermark('date_time','5 minutes').groupBy(
 
 productCounts.createOrReplaceTempView('product_view_counts')
 
-# Ideally we would use a left join but since our click stream data is synthetic
-# We will use an inner join to filter out zip codes which may not exist
-
-
 productViewCountsWithState = sparkSession.sql("""
 SELECT
   pvc.product_id,
   pvc.state,
   pvc.count,
-  cast(pvc.date_time.start as string) as period_start,
-  cast(pvc.date_time.end as string) as period_end,
+  pvc.date_time.start as period_start,
   substr(
       regexp_replace(
           cast(pvc.date_time.start as string),
@@ -130,34 +132,40 @@ FROM
   product_view_counts pvc
 """)
 
-query = productViewCountsWithState.writeStream\
-                              .format('csv')\
-                              .partitionBy('hour')\
-                              .option("sep","|")\
-                              .outputMode('append')\
-                              .queryName('product_views_per_state_per_hour')
-                              
-if checkpoint_location is not None:
-    query = query.option('checkpointLocation',checkpoint_location)
+query = productViewCountsWithState.writeStream
+
+if test_mode:
+    query = query.format('csv')\
+                 .option("sep","|")
+else:
+    query = query.format('parquet')
+
+query = query.partitionBy('hour')\
+             .outputMode('append')\
+             .queryName('product_views_per_state_per_hour')\
+             .option('checkpointLocation',checkpoint_location)
 
 query = query.option('path',store_data_path)
 
-streamingQuery = query.start()
+streamingQueries  =[]
+streamingQueries.append(query.start())
 
-query1 = productCounts.writeStream\
-                     .format('console')\
-                     .outputMode('append')\
-                     .queryName('console_product_views_per_state_per_hour')
+if test_mode:
+    streamingQuery2 = productCounts.writeStream\
+                                   .format('console')\
+                                   .outputMode('append')\
+                                   .queryName('console_product_views_per_state_per_hour')\
+                                   .start()
+    
+    streamingQueries.append(streamingQuery2)
+    streamingQuery3 = productStreamOriginal.writeStream\
+                                           .format('console')\
+                                           .outputMode('append')\
+                                           .queryName("product_stream_original")\
+                                           .start()
+    streamingQueries.append(streamingQuery3)
+    
 
-streamingQuery1 = query1.start()
 
-streamingQuery2 = productStreamOriginal.writeStream.format('console').outputMode('append').queryName("product_strea_original").start()
-
-streamingQuery.awaitTermination()
-
-
-streamingQuery1.awaitTermination()
-
-streamingQuery2.awaitTermination()
-                          
-
+for streamingQuery in streamingQueries:
+    streamingQuery.awaitTermination()
