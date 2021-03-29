@@ -3,3 +3,4 @@ checkpoint
 data
 .env
 spark-warehouse
+*.pyc
