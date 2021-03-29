@@ -112,13 +112,14 @@ def gen_last_n_timestamps_from_now(amt,interval=300,start_delta_seconds=-1):
     time_increment = timedelta(seconds = interval)
     current_date_gen_time = date_gen_start_date
 
-    items=[]
+    
     for index in range(0,amt+1):
         current_date_gen_time = current_date_gen_time + time_increment
-        items.append(current_date_gen_time.isoformat().split(".")[0])
-    return items
+        yield current_date_gen_time.isoformat().split(".")[0]
+        
 
-udf_gen_last_n_timestamps_from_now = udf(gen_last_n_timestamps_from_now,ArrayType(StringType()))
+
+udf_gen_last_n_timestamps_from_now = udf(lambda x,y,z : [item for item in gen_last_n_timestamps_from_now(x,y,z)],ArrayType(StringType()))
 
 sparkSession.udf.register('gen_last_n_timestamps_from_now',udf_gen_last_n_timestamps_from_now)
 
@@ -156,36 +157,75 @@ ORDER BY
     hour
 """
 
-if use_batch_mode:
-    intervals_in_an_hour = ( 60*60 ) / interval_diff_in_seconds
-    total_time_to_be_considered = number_of_intervals * interval_diff_in_seconds
-    no_hours = total_time_to_be_considered / (60*60)
-    hour_start_delta_seconds=total_time_to_be_considered
-    for hour_index in range(0, no_hours):
-        hour_start_delta_seconds=hour_start_delta_seconds-(hour_index*60*60)
-        print("="*32)
-        print("Processing batch {} of {}".format(hour_index+1,no_hours))
-        print("="*32)
-        productViewCountsWithState=sparkSession.sql(
-            productViewCountsWithStateQuery.format(
-                intervals_in_an_hour,
-                interval_diff_in_seconds,
-                hour_start_delta_seconds
-            )
-        )
+productViewCountsWithStateWithoutTimestampsQuery="""
+WITH product_views__per_state_per_hour AS (
+    SELECT
+      p.product_id,
+      zs.state,
+      floor(rand()*1000) as count,
+      cast(t.stamp as timestamp) as period_start,
+      substr(
+          regexp_replace(
+              t.stamp,
+              "[^0-9]",
+              ""
+          ),
+          0,
+          10
+      ) as hour
+    FROM
+        products p 
+        CROSS JOIN zip_states zs
+        CROSS JOIN time_stamps t
+)
+SELECT 
+    *
+FROM
+    product_views__per_state_per_hour
+WHERE 
+    count > 0
+ORDER BY
+    hour
+"""
+
+def run_batch_job():
+    productViewCountsWithState=sparkSession.sql(productViewCountsWithStateWithoutTimestampsQuery)
         
-        productViewCountsWithState.write\
-                                  .format('parquet')\
-                                  .partitionBy('hour')\
-                                  .option('path',output_path)\
-                                  .mode('append')\
-                                  .save()
+    productViewCountsWithState.write\
+                              .format('parquet')\
+                              .partitionBy('hour')\
+                              .option('path',output_path)\
+                              .mode('append')\
+                              .save()
+
+if use_batch_mode:
+    batch=[]
+    for stamp in gen_last_n_timestamps_from_now(
+        number_of_intervals,
+        interval_diff_in_seconds,
+        start_delta_seconds
+    ):
+        if len(batch)< 20:
+            batch.append(Row(stamp=stamp))
+        else:
+            sparkSession.createDataFrame(batch,schema="stamp string")\
+                        .createOrReplaceTempView("time_stamps")
+    
+            run_batch_job()
+            batch = []
+
+    if len(batch) > 0:
+        sparkSession.createDataFrame(batch,schema="stamp string")\
+                    .createOrReplaceTempView("time_stamps")
+        run_batch_job()
+        
+    
 else:
     productViewCountsWithState=sparkSession.sql(
         productViewCountsWithStateQuery.format(
             number_of_intervals,
             interval_diff_in_seconds,
-            hour_start_delta_seconds
+            start_delta_seconds
         )
     )
     
